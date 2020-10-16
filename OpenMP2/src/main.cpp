@@ -3,10 +3,30 @@
 #include <fstream>
 #include <omp.h>
 
-double calc(uint32_t x_last, uint32_t num_threads)
+double calc (uint32_t x_last, uint32_t num_threads)
 {
-  return 0;
+    double result = 0;
+    double *arr_res = (double*)calloc(x_last, sizeof(double));
+
+    #pragma omp parallel num_threads(num_threads)
+    { 
+        #pragma omp for
+    	for (int i = x_last; i > 0; i--)
+    	{
+      	    arr_res[i - 1] += (1.0) / i;
+    	}
+    }
+
+    for(int i = x_last - 1; i >= 0; i--)
+    {
+    	result += arr_res[i];
+    }
+
+    free(arr_res);
+
+    return result;
 }
+
 
 int main(int argc, char** argv)
 {
