@@ -26,13 +26,13 @@ SUCCESS_TESTS=()
 FAIL_TESTS=()
 
 for test_dir in $tests_dir/*; do
-  for proc in {1..8}; do
+  for proc in {1..3}; do
     test="$(basename $test_dir)_p$proc"
     printf "\n[TEST $test]\n"
     echo "mpiexec -np $proc $exe $test_dir/input.txt $build/$test.txt"
-    START=$(date +%s%N)
+    START=$(date +%s)
     mpiexec -np $proc $exe $test_dir/input.txt $build/$test.txt
-    END=$(date +%s%N)
+    END=$(date +%s)
     DIFF=$((($END - $START)/1000000))
     if [ ! $? -eq 0 ]; then
       echo "[TEST $test] RUNTIME FAIL"
