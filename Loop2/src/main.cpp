@@ -5,18 +5,88 @@
 #include <unistd.h>
 #include <cmath>
 
+void mainCalc(double* arr, uint32_t begin, uint32_t end, uint32_t xSize) {
+    for (uint32_t i = 0; i < (end - begin - 1); i++) {
+        for (uint32_t j = 3; j < xSize; j++) {
+            arr[i * xSize + j] = sin(0.00001 * arr[(i + 1) * xSize + j - 3]);
+        }
+    }
+}
+
+void slaveProcesses(int rank, uint32_t yLocSize, uint32_t ySize, uint32_t xSize) {
+    uint32_t begin, end;
+    MPI_Status status;
+    double *newArr;
+    
+    begin = rank * yLocSize;
+    end = (rank + 1) * yLocSize + 1;
+    if (end > ySize)
+        end = ySize;
+    if (begin > ySize)
+        begin = ySize;
+    
+    newArr = (double*) malloc (sizeof(double) * xSize * (end - begin));
+    
+    if (end == begin) {
+        MPI_Send(newArr, 0, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
+    } else {
+        MPI_Recv(newArr, xSize * (end - begin), MPI_DOUBLE, 0, 0, MPI_COMM_WORLD, &status);
+        mainCalc(newArr, begin, end, xSize);
+        MPI_Send(newArr, xSize * (end - begin - 1), MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
+    }
+    free(newArr);
+}
+
+void mainProcess(double* arr, uint32_t yLocSize, uint32_t ySize, uint32_t xSize, int size) {
+    uint32_t begin, end;
+    MPI_Status status;
+    
+    for (int i = 1; i < size; i++) {
+        begin = i * yLocSize;
+        end = (i + 1) * yLocSize + 1;
+        if (end > ySize) {
+            end = ySize;
+        }
+        if (begin > ySize) {
+            begin = ySize;
+        }
+        MPI_Send(&(arr[begin * xSize]), xSize * (end - begin), MPI_DOUBLE, i, 0, MPI_COMM_WORLD);
+    }
+    
+    begin = 0;
+    if (yLocSize + 1 < ySize) {
+        end = yLocSize + 1;
+    } else {
+        end = ySize;
+    }
+    
+    mainCalc(arr, begin, end, xSize);
+    
+    for (int i = 1; i < size; i++) {
+        begin = i * yLocSize;
+        end = (i + 1) * yLocSize;
+        if (end > ySize)
+            end = ySize;
+        if (begin > ySize)
+            begin = ySize;
+        MPI_Recv (&(arr[begin * xSize]), xSize * (end - begin), MPI_DOUBLE, i, 0, MPI_COMM_WORLD, &status);
+    }
+}
+
 void calc(double* arr, uint32_t ySize, uint32_t xSize, int rank, int size)
 {
-  if (rank == 0 && size > 0)
-  {
-    for (uint32_t y = 0; y < ySize - 1; y++)
-    {
-      for (uint32_t x = 3; x < xSize; x++)
-      {
-        arr[y*xSize + x] = sin(0.00001*arr[(y + 1)*xSize + x - 3]);
-      }
+    uint32_t yLocSize;
+
+    MPI_Bcast(&ySize, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&xSize, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+    yLocSize = ySize / size + 1;
+    
+    if (rank == 0 && size > 0) {
+        mainProcess(arr, yLocSize, ySize, xSize, size);
+    } else {
+        slaveProcesses(rank, yLocSize, ySize, xSize);
     }
-  }
 }
 
 int main(int argc, char** argv)
