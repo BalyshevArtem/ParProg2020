@@ -26,7 +26,7 @@ SUCCESS_TESTS=()
 FAIL_TESTS=()
 
 for test_dir in $tests_dir/*; do
-  for proc in {1..2}; do
+  for proc in {1..3}; do
     test="$(basename $test_dir)_p$proc"
     printf "\n[TEST $test]\n"
     echo "mpiexec -np $proc $exe $test_dir/input.txt $build/$test.txt"
