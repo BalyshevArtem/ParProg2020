@@ -1,3 +1,5 @@
+
+
 #include <iostream>
 #include <iomanip>
 #include <fstream>
@@ -10,32 +12,107 @@ double acceleration(double t)
   return sin(t);
 }
 
-void calc(double* trace, uint32_t traceSize, double t0, double dt, double y0, double y1, int rank, int size)
+void iterativeCalcRes(double* local_arrPoints, double a_i, double dt, double v_i, uint32_t num_points, double local_t0) {
+    local_arrPoints[0] = a_i;
+    local_arrPoints[1] = a_i + dt * v_i;
+    for (uint32_t i = 2; i < num_points; i++)
+    {
+        local_arrPoints[i] = dt * dt * acceleration (local_t0 + (i - 1) * dt)
+                    + 2 * local_arrPoints[i - 1] - local_arrPoints[i - 2];
+    }
+}
+
+void calc (double* trace, uint32_t traceSize, double t0, double dt, double y0, double y1, int rank, int size)
 {
-  // Sighting shot
-  double v0 = 0;
-  if (rank == 0 && size > 0)
-  {
-    trace[0] = y0;
-    trace[1] = y0 + dt*v0;
-    for (uint32_t i = 2; i < traceSize; i++)
-    {
-      trace[i] = dt*dt*acceleration(t0 + (i - 1)*dt) + 2*trace[i - 1] - trace[i - 2];
-    }
-  }
+    
+    MPI_Status status;
+    double v0, a_i, v_i, b_i, u_i, a_prev, v_prev, tau;
+    uint32_t first_point, last_point, num_points;
+    double* local_arrPoints;
 
-  // The final shot
-  if (rank == 0 && size > 0)
-  {
-    v0 = (y1 - trace[traceSize - 1])/(dt*traceSize);
-    trace[0] = y0;
-    trace[1] = y0 + dt*v0;
-    for (uint32_t i = 2; i < traceSize; i++)
-    {
-      trace[i] = dt*dt*acceleration(t0 + (i - 1)*dt) + 2*trace[i - 1] - trace[i - 2];
+    MPI_Bcast (&traceSize, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast (&t0, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast (&dt, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    
+    first_point = traceSize * rank / size;
+    last_point = traceSize * (rank + 1) / size;
+    num_points = last_point - first_point;
+    local_arrPoints = (double *)calloc(num_points, sizeof (*local_arrPoints));
+    v0 = 0.0;
+    v_i = 0.0;
+    b_i = 0.0;
+    u_i = 0.0;
+    a_prev = 0.0;
+    v_prev = 0.0;
+    tau = dt * traceSize / size;
+    t0 = t0 + tau * rank;
+    
+    if (rank == 0 && size > 0) {
+        a_i = y0;
+    } else {
+        a_i = 0.0;
     }
-  }
+    
+    //first step
+    iterativeCalcRes(local_arrPoints, a_i, dt, v_i, num_points, t0);
+    
+    b_i = local_arrPoints[num_points - 1];
+    u_i = (local_arrPoints[num_points - 1] - local_arrPoints[num_points - 2]) / dt;
+    
+    if (size > 1) {
+        
+        if (rank != size - 1 && size > 1) {
+            MPI_Send (&u_i, 1, MPI_DOUBLE, rank + 1, 0, MPI_COMM_WORLD);
+            MPI_Send (&b_i, 1, MPI_DOUBLE, rank + 1, 0, MPI_COMM_WORLD);
+        }
+        
+        if (rank != 0 && size > 1) {
+            MPI_Recv (&v_prev, 1, MPI_DOUBLE, rank - 1, 0, MPI_COMM_WORLD, &status);
+            MPI_Recv (&a_prev, 1, MPI_DOUBLE, rank - 1, 0, MPI_COMM_WORLD, &status);
+            
+            v_i = v_prev;
+            u_i += v_prev;
+            
+            a_i = a_prev;
+            b_i += a_prev + v_prev * tau;
+        }
 
+        if (rank == size - 1 && size > 1) {
+            MPI_Send (&b_i, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
+        }
+        
+        if (rank == 0 && size > 1) {
+            MPI_Recv (&a_prev, 1, MPI_DOUBLE, size - 1, 0, MPI_COMM_WORLD, &status);
+            v0 = (y1 - a_prev) / (dt * traceSize);
+        }
+        
+        MPI_Bcast (&v0, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        a_i += v0 * tau * rank;
+        v_i += v0;
+    }
+    
+    if (size == 1) {
+        v0 = (y1 - b_i) / (dt * traceSize);
+        v_i = v0;
+    }
+
+    // The final step
+    if (rank == 0) {
+        iterativeCalcRes(trace, a_i, dt, v_i, num_points, t0);
+        
+        for (int i = 1; i < size; i++)
+        {
+            uint32_t first = traceSize * i / size;
+            uint32_t last = traceSize * (i + 1) / size;
+            uint32_t len = last - first;
+            MPI_Recv (trace + first, len, MPI_DOUBLE, i, 0, MPI_COMM_WORLD, &status);
+        }
+    } else {
+        iterativeCalcRes(local_arrPoints, a_i, dt, v_i, num_points, t0);
+        MPI_Send (local_arrPoints, num_points, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
+    }
+     
+    free (local_arrPoints);
 }
 
 int main(int argc, char** argv)
